@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Movesense</title>
+    <link rel="icon" href="/logo.png" type="image/png">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" sizes="192x192" href="/logo.png">
+    <link rel="apple-touch-icon" sizes="512x512" href="/logo.png">
+    <link rel="apple-touch-startup-image" href="/logo.png">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="Movesense App">
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+
+        #output {
+            margin-top: 20px;
+            white-space: pre-wrap;
+        }
+
+        button {
+            margin-top: 10px;
+        }
+
+        #heartRateCanvas {
+            max-width: 100%;
+            height: 250px;
+            max-height: 60%;
+            margin-top: 20px;
+        }
+
+        .bpm, .body-sensor, .battery-level {
+            font-size: 36px;
+            font-weight: bold;
+        }
+
+        .body-sensor, .battery-level {
+            margin-top: 20px;
+        }
+
+        .loading {
+            font-size: 14px;
+            color: rgba(0, 0, 0, 0.5);
+        }
+
+
+    </style>
+</head>
+<body>
+
+<h1>Visualizzazione Frequenza Cardiaca</h1>
+
+<div class="bpm">BPM: <span id="bpmValue">-- <span class="loading">(Attendere notifiche dal sensore...)</span></span>
+</div>
+<div class="body-sensor">Posizione Prevista Sensore Corporeo: <span id="bodySensorLocation">--</span></div>
+<div class="battery-level">Livello Batteria: <span id="batteryLevel">--</span></div>
+
+<canvas id="heartRateCanvas"></canvas>
+
+<button id="login-button">Login</button>
+<button id="logout-button" style="display: none;">Logout</button>
+<button id="discover-button">Scopri Dispositivi</button>
+<button id="disconnect-button" disabled>Disaccoppia Dispositivo</button>
+<button id="start-button">Avvia Registrazione</button>
+<button id="save-button">Termina Registrazione</button>
+<button id="show-records">Visualizza salvataggi</button>
+
+<div id="output"></div>
+<div class="user-email">Utente: <span id="userEmail">guest</span></div>
+
+<script>
+    /*document.addEventListener("DOMContentLoaded", () => {
+            if (Notification.permission !== "granted" && Notification.permission !== "denied") {
+                Notification.requestPermission().then(permission => {
+                    console.log(`Permesso notifiche: ${permission}`);
+                });
+            }
+        });*/
+
+    
+    /* global navigator, Bluetooth */
+    let currentDevice;
+    let gattServer;
+    let heartRateCharacteristic;
+    let bodySensorCharacteristic;
+    let batteryCharacteristic;
+    let chartHeartRate;
+    const MAX_DATA_POINTS = 1000;
+    let lastBPM = 0;
+    let receivedFirstData = false; // Variabile per controllare se abbiamo ricevuto il primo set di dati
+    let updateInterval; // Timer per aggiornare il grafico
+    let isBusy = false; // Flag per controllare se un'operazione GATT è in corso
+
+    // Array per associare il valore numerico della posizione del sensore alla descrizione
+    const bodySensorLocationNames = [
+        "Altro",  // 0
+        "Torace",   // 1
+        "Polso", // 2
+        "Dito",  // 3
+        "Mano",   // 4
+    ];
+
+    document.getElementById('discover-button').addEventListener('click', discoverBluetoothDevices);
+    document.getElementById('disconnect-button').addEventListener('click', disconnectDevice);
+    document.getElementById('login-button').addEventListener('click', redirectToLogin);
+    document.getElementById('save-button').addEventListener('click', saveDashboardData);
+    document.getElementById('logout-button').addEventListener('click', logoutUser);
+    document.getElementById('start-button').addEventListener('click', clearChartData);
+    document.getElementById('show-records').addEventListener('click', redirectToRecords);
+    document.getElementById('save-button').disabled = true;
+    document.getElementById('start-button').disabled = true;
+
+    // Funzione per controllare la sessione utente
+    async function checkUserSession() {
+        try {
+            const response = await fetch('/api/auth/check-session', {method: 'GET', credentials: 'include'});
+
+            if (response.ok) {
+                const data = await response.json();
+                console.log('Risposta dall\'API:', data); // Log della risposta
+
+
+                document.getElementById('userEmail').textContent = data.email;
+
+                // Verifica se l'utente è loggato
+                const isLoggedIn = data.email && data.email.trim() !== "" && data.email != "guest";
+                console.log('Utente loggato:', isLoggedIn); // Log dello stato di login
+
+                // Gestisce visibilità dei pulsanti
+                const loginButton = document.getElementById('login-button');
+                const logoutButton = document.getElementById('logout-button');
+                const recordsButton = document.getElementById('show-records');
+
+
+                if (isLoggedIn) {
+                    localStorage.setItem('userEmail', data.email);
+                    loginButton.style.display = 'none';
+                    logoutButton.style.display = 'inline';
+                    recordsButton.style.display = 'inline';
+                } else {
+                    localStorage.setItem('userEmail', null);
+                    loginButton.style.display = 'inline';
+                    logoutButton.style.display = 'none';
+                    recordsButton.style.display = 'none';
+                }
+
+            } else {
+                console.error('Errore nel recupero della sessione utente.');
+                //document.getElementById('start-button').disabled = true; // Disabilita il pulsante in caso di errore
+            }
+        } catch (error) {
+            console.error('Errore durante la verifica della sessione:', error);
+            document.getElementById('save-button').disabled = true; // Disabilita il pulsante in caso di errore
+        }
+    }
+
+
+    // Chiamata per controllare la sessione utente al caricamento della pagina
+    window.onload = checkUserSession;
+
+    function initializeCharts() {
+        const ctxHeartRate = document.getElementById('heartRateCanvas').getContext('2d');
+        chartHeartRate = new Chart(ctxHeartRate, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Frequenza Cardiaca',
+                    backgroundColor: 'rgba(0, 119, 204, 0.3)',
+                    borderColor: 'rgba(0, 119, 204, 1)',
+                    data: []
+                }]
+            },
+            options: {
+                scales: {
+                    x: {
+                        display: true,
+                        ticks: {
+                            display: false
+                        },
+                        title: {
+                            display: true,
+                            text: 'Scala temporale in secondi'
+                        }
+                    },
+                    y: {
+                        title: {
+                            display: true,
+                            text: 'Valore Frequenza Cardiaca'
+                        },
+                        min: 0,
+                        max: 200 // range delle ordinate secondo la frequenza cardiaca
+                    }
+                }
+            }
+        });
+    }
+
+    initializeCharts();
+
+    async function discoverBluetoothDevices() {
+        const output = document.getElementById('output');
+        output.textContent = '';
+
+        try {
+
+            currentDevice = await navigator.bluetooth.requestDevice({
+                filters: [{namePrefix: 'Movesense'}],
+                optionalServices: ['heart_rate', 'battery_service']
+            });
+
+            if (currentDevice) {
+                output.textContent = `Dispositivo trovato: ${currentDevice.name} (ID: ${currentDevice.id})\n`;
+                console.log('Dispositivo trovato:', currentDevice.name);
+                await connectToDevice(currentDevice);
+                document.getElementById('disconnect-button').disabled = false;
+                document.getElementById('start-button').disabled = false;
+            }
+        } catch (error) {
+            output.textContent = `Errore: ${error.message}`;
+            console.error('Errore durante la scoperta del dispositivo:', error);
+        }
+    }
+
+    async function connectToDevice(device) {
+        try {
+            gattServer = await device.gatt.connect();
+            console.log('Connessione stabilita con il server GATT');
+
+            // Servizio Frequenza Cardiaca
+            const heartRateService = await gattServer.getPrimaryService('heart_rate');
+            heartRateCharacteristic = await heartRateService.getCharacteristic('heart_rate_measurement');
+            console.log('Servizio Frequenza Cardiaca trovato');
+
+            if (heartRateCharacteristic.properties.notify) {
+                await heartRateCharacteristic.startNotifications();
+                heartRateCharacteristic.addEventListener('characteristicvaluechanged', handleHeartRateData);
+                console.log('Notifiche attivate per i dati di frequenza cardiaca');
+            }
+
+            // Servizio Body Sensor Location
+            const bodySensorService = await gattServer.getPrimaryService('heart_rate');
+            bodySensorCharacteristic = await bodySensorService.getCharacteristic('body_sensor_location');
+            console.log('Servizio Posizione Sensore Corporeo trovato');
+
+            // Servizio Batteria
+            const batteryService = await gattServer.getPrimaryService('battery_service');
+            batteryCharacteristic = await batteryService.getCharacteristic('battery_level');
+            console.log('Servizio Batteria trovato');
+
+            if (batteryCharacteristic.properties.notify) {
+                await batteryCharacteristic.startNotifications();
+                batteryCharacteristic.addEventListener('characteristicvaluechanged', handleBatteryData);
+                console.log('Notifiche attivate per i dati di livello della batteria');
+            }
+
+            // Legge la Posizione Sensore Corporeo e il Livello della Batteria
+            await readBodySensorLocation(); // Legge subito dopo la connessione
+            await readBatteryLevel(); // Legge il livello della batteria
+
+        } catch (error) {
+            console.error('Errore durante la connessione:', error);
+        }
+    }
+
+    async function readBodySensorLocation() {
+        if (isBusy) return; // Non procede se c'è già un'operazione in corso
+        isBusy = true;
+
+        try {
+            if (bodySensorCharacteristic) {
+                const value = await bodySensorCharacteristic.readValue();
+                handleBodySensorLocation(value); // Passa il valore a handleBodySensorLocation
+            }
+        } catch (error) {
+            console.error('Errore durante la lettura della Posizione Sensore Corporeo:', error);
+        } finally {
+            isBusy = false; // Resetta il flag
+        }
+    }
+
+    async function readBatteryLevel() {
+        if (isBusy) return; // Non procede se c'è già un'operazione in corso
+        isBusy = true;
+
+        try {
+            if (batteryCharacteristic) {
+                const value = await batteryCharacteristic.readValue();
+                const batteryLevel = value.getUint8(0); // Il livello della batteria e' il primo valore
+                document.getElementById('batteryLevel').textContent = `${batteryLevel}%`; // Aggiorna la visualizzazione del livello della batteria
+                console.log('Livello Batteria:', batteryLevel);
+            }
+        } catch (error) {
+            console.error('Errore durante la lettura del livello della batteria:', error);
+        } finally {
+            isBusy = false; // Resetta il flag
+        }
+    }
+
+
+
+    function handleHeartRateData(event) {
+        const value = event.target.value;
+        let heartRateData = [];
+
+        for (let i = 0; i < value.byteLength; i++) {
+            heartRateData.push(value.getUint8(i));
+        }
+
+        console.log('Dati Frequenza Cardiaca:', heartRateData);
+
+        if (heartRateData.length === 2 && heartRateData[0] === 0 && heartRateData[1] === 72) {
+            //connectToDevice(currentDevice);
+            return;
+        }
+
+        const bpmValue = heartRateData[1]; // Il BPM e' il secondo valore
+
+        const bpmElement = document.getElementById('bpmValue');
+        bpmElement.textContent = bpmValue;
+
+        if (bpmValue < 40 || bpmValue > 150) {
+            bpmElement.style.color = 'red'; // Colore rosso per valori critici
+        } else {
+            bpmElement.style.color = 'black'; // Colore normale per valori nella norma
+        }
+
+        setTimeout(() => {
+            // Controlla se il BPM è troppo basso o troppo alto
+            detectLowBPM(bpmValue);
+            detectHighBPM(bpmValue);
+
+            // Controlla la variazione improvvisa dei battiti
+            detectSuddenChange(bpmValue);
+        }, 0);
+
+        lastBPM = bpmValue; // Memorizza l'ultimo BPM
+
+        receivedFirstData = true; // Imposta che abbiamo ricevuto dati
+
+        // Aggiorna il grafico solo dopo aver ricevuto il primo set di dati
+        updateChartWithBPM(bpmValue);
+
+        // Inizia ad aggiornare il grafico se abbiamo ricevuto dati per la prima volta
+        if (!updateInterval && receivedFirstData) {
+            startUpdatingChart();
+        }
+    }
+
+    // Definisce una soglia per la variazione massima accettabile
+    const BPM_THRESHOLD = 30; // Soglia massima di variazione del BPM
+
+    // Funzione per rilevare variazioni improvvise dei battiti
+    function detectSuddenChange(currentBPM) {
+        let difference = 0;
+        if (lastBPM != 0)
+            difference = Math.abs(currentBPM - lastBPM); // Differenza tra i BPM attuali e quelli precedenti
+
+        if (difference >= BPM_THRESHOLD) {
+            console.warn(`Variazione improvvisa rilevata: ${difference} BPM!`);
+            triggerAlarmNotification(difference); // Invia la notifica di allarme
+        }
+    }
+
+    // Variabile globale per tracciare l'ultimo alert
+    let lastAlertTime = 0;
+
+    // Funzione per rilevare BPM bassi
+    function detectLowBPM(currentBPM) {
+        const LOW_BPM_THRESHOLD = 40; // Soglia di attenzione per BPM bassi
+        const currentTime = Date.now(); // Ottieni il timestamp corrente
+
+        // Controlla se il BPM è inferiore alla soglia e se è passato almeno un minuto dall'ultimo alert
+        if (currentBPM < LOW_BPM_THRESHOLD && (currentTime - lastAlertTime) >= 60000) {
+            console.warn(`Attenzione: BPM troppo bassi rilevati (${currentBPM} BPM)!`);
+            alert(`ATTENZIONE: BPM troppo bassi rilevati (${currentBPM} BPM)!`);
+            // Memorizza il timestamp dell'ultimo alert
+            lastAlertTime = currentTime;
+        }
+    }
+
+    // Funzione per rilevare BPM alti
+    function detectHighBPM(currentBPM) {
+        const HIGH_BPM_THRESHOLD = 150; // Soglia di attenzione per BPM alti
+        const currentTime = Date.now(); // Ottieni il timestamp corrente
+
+        // Controlla se il BPM è superiore alla soglia e se è passato almeno un minuto dall'ultimo alert
+        if (currentBPM > HIGH_BPM_THRESHOLD && (currentTime - lastAlertTime) >= 60000) {
+            console.warn(`Attenzione: BPM troppo alti rilevati (${currentBPM} BPM)!`);
+            alert(`ATTENZIONE: BPM troppo alti rilevati (${currentBPM} BPM)!`);
+            // Memorizza il timestamp dell'ultimo alert
+            lastAlertTime = currentTime;
+        }
+    }
+
+
+    // Funzione per inviare una notifica di allarme
+    function triggerAlarmNotification(difference) {
+        const alarmMessage = `Attenzione! È stata rilevata una variazione improvvisa della frequenza cardiaca di ${difference} BPM. Controllare la situazione.`;
+        alert(alarmMessage);
+    }
+
+    function handleBatteryData(event) {
+        const value = event.target.value;
+        const batteryLevel = value.getUint8(0);
+
+        // Controllo di coerenza
+        const currentBatteryLevel = parseInt(document.getElementById('batteryLevel').textContent) || 0;
+        if (batteryLevel >= 0 && batteryLevel <= 100 /*&& Math.abs(batteryLevel - currentBatteryLevel) <= 10*/) {
+            document.getElementById('batteryLevel').textContent = `${batteryLevel}%`; // Aggiorna la visualizzazione del livello della batteria
+            console.log('Livello Batteria aggiornato:', batteryLevel);
+        } else {
+            console.warn('Livello Batteria incoerente. Ignorato:', batteryLevel);
+        }
+    }
+
+    function startUpdatingChart() {
+        updateInterval = setInterval(() => {
+            updateChartWithBPM(lastBPM);
+        }, 60000); // Aggiorna ogni 60 secondi
+    }
+
+    function handleBodySensorLocation(value) {
+        const bodySensorData = []; // Array per i dati della posizione del sensore corporeo
+
+        // Leggi i valori della Posizione Sensore Corporeo
+        for (let i = 0; i < value.byteLength; i++) {
+            bodySensorData.push(value.getUint8(i));
+        }
+
+        console.log('Dati Posizione Sensore Corporeo:', bodySensorData); // Visualizza il vettore di dati
+
+        // Mostra solo il primo valore
+        const currentBodySensorLocation = bodySensorData[0];
+
+        // Converte il valore numerico in una stringa descrittiva
+        const locationDescription = bodySensorLocationNames[currentBodySensorLocation] || "Sconosciuto";
+
+        document.getElementById('bodySensorLocation').textContent = locationDescription;
+    }
+
+    function redirectToLogin() {
+        window.location.href = 'login.html'; // Reindirizza alla pagina di login
+    }
+
+    function redirectToRecords() {
+        window.location.href = `records.html`;
+    }
+
+    async function getUserIdFromEmail(email) {
+
+        try {
+            const response = await fetch(`/api/auth/get-id?email=${email}`, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                console.log('User ID:', data.userId);
+                return data.userId;
+            } else {
+                throw new Error('Errore durante il recupero dell\'ID utente');
+            }
+        } catch (error) {
+            console.error('Errore durante la richiesta dell\'ID utente:', error);
+            return null;
+        }
+    }
+
+
+    async function saveDashboardData() {
+        document.getElementById('start-button').disabled = false;
+        document.getElementById('save-button').disabled = true;
+        const bpmMedio = calculateAverageBPM(); // Funzione per calcolare la media dei BPM
+        const batteryLevel = document.getElementById('batteryLevel').textContent.replace('%', '');
+        const bodySensorLocation = document.getElementById('bodySensorLocation').textContent;
+        const email = document.getElementById('userEmail').textContent;
+        //console.log('Email:', email); // Log dell'email per debug
+
+
+        const userId = await getUserIdFromEmail(email);
+        //console.log('User ID in saveDashboardData:', userId);
+
+        if (!userId) {
+            alert('Impossibile ottenere l\'ID utente. Riprovare.');
+            return; // Interrompe il salvataggio se non riesce a ottenere l'ID utente
+        }
+
+        const chartData = chartHeartRate.data.datasets[0].data;
+        const serializedChartData = JSON.stringify(chartData);
+
+        //Data formattata
+        const today = new Date();
+        const day = String(today.getDate()).padStart(2, '0');
+        const month = String(today.getMonth() + 1).padStart(2, '0');
+        const year = today.getFullYear();
+        const hours = String(today.getHours()).padStart(2, '0'); // Ottieni l'ora
+        const minutes = String(today.getMinutes()).padStart(2, '0'); // Ottieni i minuti
+        const formattedDate = `${day}/${month}/${year} ${hours}:${minutes}`; // Formato finale
+        const chartLabels = chartHeartRate.data.labels; // Le etichette delle X (le date)
+        const serializedChartLabels = JSON.stringify(chartLabels);
+
+        const payload = {
+            avgBpm: bpmMedio,
+            batteryLevel: batteryLevel,
+            sensorPosition: bodySensorLocation,
+            date: formattedDate,
+            user: userId,
+            chartData: serializedChartData,// Invio dei dati del grafico come JSON
+            chartLabels: serializedChartLabels
+        };
+        //console.log(JSON.stringify(payload));
+
+        fetch('/api/dashboard/save', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload) // Serializzo l'intero payload come JSON
+        })
+            .then(response => {
+                if (response.ok) {
+                    return response.json();
+                }
+                throw new Error('Errore nella risposta dal server');
+            })
+            .then(data => {
+                alert('Dati salvati correttamente!');
+            })
+            .catch(error => {
+                console.error('Errore durante il salvataggio dei dati:', error);
+            });
+    }
+
+
+    // Funzione per calcolare il BPM medio
+    function calculateAverageBPM() {
+        const bpmArray = chartHeartRate.data.datasets[0].data;
+
+        // Controllo se non ci sono dati BPM
+        if (bpmArray.length === 0) {
+            return 0;
+        }
+
+        const sum = bpmArray.reduce((acc, bpm) => acc + bpm, 0);
+        return (sum / bpmArray.length).toFixed(2);
+    }
+
+
+    function updateChartWithBPM(bpm) {
+        // Controlla se il valore della frequenza cardiaca è maggiore di 200
+        if (bpm > 200) {
+            console.warn(`Valore BPM (${bpm}) superato, ignorato nel grafico.`);
+            return; // Non aggiorna il grafico se BPM è superiore a 200
+        }
+
+        //const currentTime = Math.floor(Date.now() / 1000);
+        //Data formattata
+        const today = new Date();
+        const day = String(today.getDate()).padStart(2, '0');
+        const month = String(today.getMonth() + 1).padStart(2, '0');
+        const year = today.getFullYear();
+        const hours = String(today.getHours()).padStart(2, '0'); // Ottieni l'ora
+        const minutes = String(today.getMinutes()).padStart(2, '0'); // Ottieni i minuti
+        const formattedDate = `${day}/${month}/${year} ${hours}:${minutes}`; // Formato finale
+        chartHeartRate.data.labels.push(formattedDate);
+        chartHeartRate.data.datasets[0].data.push(bpm);
+
+        if (chartHeartRate.data.labels.length > MAX_DATA_POINTS) {
+            chartHeartRate.data.labels.shift();
+            chartHeartRate.data.datasets[0].data.shift();
+        }
+
+        chartHeartRate.update();
+    }
+
+    async function disconnectDevice() {
+        if (gattServer) {
+            await gattServer.disconnect();
+            console.log('Dispositivo disconnesso');
+            document.getElementById('disconnect-button').disabled = true;
+            currentDevice = null;
+            output.textContent = `Dispositivo disconesso`;
+
+            // Interrompe l'aggiornamento del grafico se il dispositivo viene disconnesso
+            clearInterval(updateInterval);
+            updateInterval = null;
+
+            // Ripristina i valori predefiniti
+            document.getElementById('bpmValue').innerHTML = '-- <span class="loading">(Attendere notifiche dal sensore...)</span>';
+            document.getElementById('bodySensorLocation').textContent = '--';
+            document.getElementById('batteryLevel').textContent = '--';
+        }
+    }
+
+    async function logoutUser() {
+        try {
+            const response = await fetch('/api/auth/logout', {method: 'POST', credentials: 'include'});
+
+            if (response.ok) {
+                console.log('Utente disconnesso con successo');
+                // Ricarica la pagina dopo il logout
+                checkUserSession()
+            } else {
+                console.error('Errore durante il logout');
+            }
+        } catch (error) {
+            console.error('Errore durante il logout:', error);
+        }
+    }
+
+    function clearChartData() {
+        document.getElementById('start-button').disabled = true;
+        document.getElementById('save-button').disabled = false;
+
+        // Pulisce i dati del grafico
+        chartHeartRate.data.datasets.forEach((dataset) => {
+            dataset.data = []; // Azzera i dati di ogni dataset
+        });
+
+        // Pulisce le etichette temporali sull'asse X
+        chartHeartRate.data.labels = []; // Azzera le etichette temporali
+
+
+        // Rende il grafico vuoto e aggiorna la scala
+        chartHeartRate.update();
+    }
+
+
+</script>
+</body>
+</html>

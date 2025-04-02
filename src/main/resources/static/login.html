@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Movesense</title>
+    <link rel="icon" href="/logo.png" type="image/png">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        .container {
+            max-width: 400px;
+            margin: auto;
+        }
+        form {
+            display: flex;
+            flex-direction: column;
+        }
+        input, button {
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Login</h1>
+    <form id="login-form">
+        <input type="email" id="email" placeholder="Email" required>
+        <input type="password" id="password" placeholder="Password" required>
+        <button type="submit">Accedi</button>
+    </form>
+    <hr>
+    <h1>Registrati</h1>
+    <form id="register-form">
+        <input type="email" id="register-email" placeholder="Email" required>
+        <input type="password" id="register-password" placeholder="Password" required>
+        <button type="submit">Registrati</button>
+    </form>
+    <div id="output"></div>
+</div>
+
+<script>
+    document.getElementById('login-form').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const email = document.getElementById('email').value;
+        const password = document.getElementById('password').value;
+
+        const response = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ email, password })
+        });
+
+        const data = await response.json(); // Cambiato per ottenere il JSON della risposta
+        if (response.ok) {
+            localStorage.setItem('token', data.message); // Memorizza il messaggio di successo o il token
+            window.location.href = data.redirectUrl; // Reindirizza alla dashboard
+        } else {
+            document.getElementById('output').textContent = data.message; // Messaggio di errore
+        }
+    });
+
+
+
+    document.getElementById('register-form').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const email = document.getElementById('register-email').value;
+        const password = document.getElementById('register-password').value;
+
+        const response = await fetch('/api/auth/register', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({email, password})
+        });
+
+        const data = await response.text(); 
+        if (response.ok) {
+            document.getElementById('output').textContent = "Registrazione riuscita! Effettua il login.";
+            // Reindirizza automaticamente alla pagina di login dopo 3 secondi
+            setTimeout(() => {
+                window.location.href = 'login.html'; // Aggiorna l'URL a seconda della tua struttura
+            }, 3000);
+        } else {
+            document.getElementById('output').textContent = data; // Mostra il messaggio di errore
+        }
+    });
+</script>
+</body>
+</html>

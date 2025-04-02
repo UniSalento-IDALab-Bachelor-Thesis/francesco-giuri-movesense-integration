@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Heart Rate Data</title>
+    <style>
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #f2f2f2;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+
+        tr:hover {
+            background-color: #ddd;
+        }
+    </style>
+</head>
+<body>
+<h1>Heart Rate Data</h1>
+
+<table id="heartRateTable">
+    <thead>
+    <tr>
+        <th>Date</th>
+        <th>BPM avg.</th>
+        <th>Battery Level</th>
+        <th>Body Position</th>
+    </tr>
+    </thead>
+    <tbody id="heartRateTableBody">
+    <!-- I dati verranno aggiunti qui tramite JavaScript -->
+    </tbody>
+</table>
+
+<script>
+    async function fetchHeartRateData() {
+
+        try {
+            const response = await fetch('/api/dashboard/user-data', {
+                method: 'GET',
+                credentials: 'include' // Include i cookie per la sessione
+            });
+
+            if (response.ok) {
+                const heartRateData = await response.json();
+                populateTable(heartRateData);
+            } else {
+                console.error('Errore durante il recupero dei dati:', response.statusText);
+            }
+        } catch (error) {
+            console.error('Errore durante la richiesta API:', error);
+        }
+    }
+
+    function populateTable(data) {
+        const tableBody = document.getElementById('heartRateTableBody');
+        tableBody.innerHTML = ''; // Svuota la tabella
+
+        data.forEach(item => {
+            const row = document.createElement('tr');
+
+            const dateCell = document.createElement('td');
+            dateCell.textContent = item.date;
+            row.appendChild(dateCell);
+
+            const avgBpmCell = document.createElement('td');
+            avgBpmCell.textContent = item.avgBpm; // Utilizza avg_bpm
+            row.appendChild(avgBpmCell);
+
+            const batteryLevelCell = document.createElement('td');
+            batteryLevelCell.textContent = item.batteryLevel; // Utilizza battery_level
+            row.appendChild(batteryLevelCell);
+
+            const sensorPositionCell = document.createElement('td');
+            sensorPositionCell.textContent = item.sensorPosition; // Utilizza sensor_position
+            row.appendChild(sensorPositionCell);
+
+            tableBody.appendChild(row);
+        });
+    }
+
+
+    // Chiamata all'API appena la pagina viene caricata
+    window.onload = fetchHeartRateData;
+</script>
+</body>
+</html>
