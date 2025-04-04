@@ -70,9 +70,10 @@ This application connects to the **Heart Rate Service** (`0000180d-0000-1000-800
 4. Select a **Movesense device** (e.g., name starts with "Movesense").
 5. Begin viewing BPM data in real time!
 
+The project is configured to be deployed on Render.com, utilizing the provided `Dockerfile`.
+
 Alternatively, the project is deployed and available at:  
 [https://movesenseapp.onrender.com/dashboard.html](https://movesenseapp.onrender.com/dashboard.html)
-
 
 ---
 
