@@ -65,6 +65,7 @@ This application connects to the **Heart Rate Service** (`0000180d-0000-1000-800
    - Execute the `MovesenseWebApplication` Java class to start the server.
    - Open `dashboard.html` in a **Chrome browser** (preferably Android or Desktop).
    - The server will start on the default port, but **MySQL** must also be running on its port to store data.
+   - **Enable HTTPS locally** by generating self-signed certificates and SSH keys for local secure communication.
 3. Click on `Discover Devices`.
 4. Select a **Movesense device** (e.g., name starts with "Movesense").
 5. Begin viewing BPM data in real time!
