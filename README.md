@@ -24,11 +24,12 @@ The goal of this project is to demonstrate the integration of **Movesense**, a p
 
 ## 🛠️ Technologies Used
 
-- **HTML5 / CSS3 / JavaScript / Java / Maven / Docker / MySQL**
+- **HTML5 / CSS3 / JavaScript / Java / Docker / MySQL**
+- **Maven** for managing dependencies
 - [**Chart.js**](https://www.chartjs.org/) for dynamic chart rendering
 - **Web Bluetooth API** for BLE communication (browser-side)
-- No server-side components or database required
-
+- **Render.com** for server hosting and deployment
+- **FreeSQLDatabase.com** as external SQL database for data persistence
 ---
 
 ## 🔗 BLE Integration Details
@@ -37,13 +38,20 @@ This application connects to the **Heart Rate Service** (`0000180d-0000-1000-800
 
 ### 📚 Services and Characteristics
 
-- **Service:** `Heart Rate`  
-  UUID: `0000180d-0000-1000-8000-00805f9b34fb`
+#### - **Service:** `Heart Rate`  
+    UUID: `0000180d-0000-1000-8000-00805f9b34fb`
 
-- **Characteristic (Read access):**  
-  `Aerobic Heart Rate Lower Limit`  
-  UUID: `00002a7e-0000-1000-8000-00805f9b34fb`  
-  *(used to manually request heart rate samples without using notifications)*
+- **Characteristic (Notifiy access):** `Heart Rate Measurement`  
+  UUID: `00002a37-0000-1000-8000-00805f9b34fb`
+
+- **Characteristic (Read access):** `Body Sensor Location`  
+  UUID: `00002a37-0000-1000-8000-00805f9b34fb`
+
+#### - **Service:** `Battery Service`  
+    UUID: `0000180f-0000-1000-8000-00805f9b34fb`
+
+- **Characteristic (Read access):** `Battery Level`  
+  UUID: `00002a19-0000-1000-8000-00805f9b34fb`
 
 > ⚠️ **Note:** Many standard characteristics such as `heart_rate_measurement` rely on notifications which are not supported by every sensor/browser. This implementation leverages readable characteristics to support broader compatibility.
 
@@ -87,4 +95,4 @@ This project is licensed under the MIT License.
 ## 👤 Author
 
 **Francesco Giuri** – *Bachelor Degree Thesis*  
-Thesis on the integration of the **Movesense sensor** in a **web-based Android-compatible application** to acquire and visualize **heart rate data** using **Bluetooth Low Energy (BLE)** technology.
+Thesis on the integration of the **Movesense sensor** in a **web-based mobile-compatible application** to acquire and visualize **heart rate data** using **Bluetooth Low Energy (BLE)** technology.
